@@ -97,7 +97,8 @@ class Http2Muxer() {
   def muxPriority(priorityFrame: Priority, accumulator: Vector[ByteString]): MuxedFrame =
     MuxedFrame(accumulator :+ priorityFrame.toFrame.toByteString)
 
-  def muxRstStream(rstStream: RstStream, accumulator: Vector[ByteString]): MuxedFrame = MuxedFrame(accumulator :+ rstStream.toFrame.toByteString)
+  def muxRstStream(rstStream: RstStream, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ rstStream.toFrame.toByteString)
 
   def muxSettings(settingsFrame: Settings, accumulator: Vector[ByteString]): MuxedFrame =
     MuxedFrame(accumulator :+ settingsFrame.toFrame.toByteString)
