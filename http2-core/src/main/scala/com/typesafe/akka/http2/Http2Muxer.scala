@@ -49,36 +49,34 @@ class Http2Muxer() {
     headerFrame: Header,
     accumulator: Vector[ByteString]): MuxedFrame = {
 
-    if (headerFrame.fragment.size <= maxFrameSize)
-      MuxedFrame(accumulator :+ headerFrame.toFrame.toByteString)
-    else {
-      val fragmentChunk: ByteString = headerFrame.fragment.take(maxFrameSize)
-      val headerChunk = Header(headerFrame.streamIdentifier, fragmentChunk, endHeaders = false)
-      val continuationFrames: MuxedFrame = muxContinuation(
-        maxFrameSize,
-        headerFrame.streamIdentifier,
-        headerFrame.fragment.drop(fragmentChunk.size),
-        accumulator)
-      MuxedFrame((accumulator :+ headerChunk.toFrame.toByteString) ++ continuationFrames.accumulator)
+    val headerFragments: Vector[ByteString] = headerFrame.fragment.sliding(maxFrameSize).toVector
+    headerFragments.size match {
+      case 1 =>
+        MuxedFrame(accumulator :+ headerFrame.toFrame.toByteString)
+      case _ =>
+        val continuations: MuxedFrame = muxContinuation(
+          maxFrameSize,
+          headerFrame.streamIdentifier,
+          headerFragments.tail,
+          accumulator)
+        MuxedFrame((accumulator :+ headerFrame.toFrame.toByteString) ++ continuations.accumulator)
     }
   }
 
   private def muxContinuation(
     maxFrameSize: Int,
     streamIdentifier: StreamIdentifier,
-    fragment: ByteString,
+    fragments: Vector[ByteString],
     accumulator: Vector[ByteString]): MuxedFrame = {
 
-    val continuations = fragment.sliding(maxFrameSize).map(frag =>
-      Continuation(streamIdentifier, frag, endHeaders = false)).toVector
+    val continuations: Vector[Continuation] = fragments.map(frag =>
+      Continuation(streamIdentifier, frag, endHeaders = false))
 
-    val updatedContinuations = continuations.updated(
+    val updatedContinuations: Vector[Continuation] = continuations.updated(
       continuations.size,
       Continuation(streamIdentifier, continuations.last.fragment, endHeaders = true))
 
-    val continuationToVectorOfByteString = updatedContinuations.map(_.toFrame.toByteString)
-
-    MuxedFrame(continuationToVectorOfByteString)
+    MuxedFrame(updatedContinuations.map(_.toFrame.toByteString))
   }
 
   def muxData(
