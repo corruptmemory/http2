@@ -1,7 +1,13 @@
+/*
+ * Copyright © 2015 Typesafe, Inc. All rights reserved.
+ * No information contained herein may be reproduced or transmitted in any form
+ * or by any means without the express written permission of Typesafe, Inc.
+ */
 package com.typesafe.akka.http2
 
 import akka.util.ByteString
 import java.lang.IllegalArgumentException
+import java.nio.ByteBuffer
 
 final class StreamIdentifier private(val underlying:Int) extends AnyVal {
   def toInt:Int = underlying
@@ -31,16 +37,19 @@ object StreamIdentifier {
  +=+=============================================================+
  |                   Frame Payload (0...)                      ...
  */
-final case class ToHttpFrame(streamIdentifier: StreamIdentifier,
+final case class Http2Frame(streamIdentifier: StreamIdentifier,
                             length: Int,
                             frameType: Byte,
                             flags: Byte,
                             payload: ByteString) {
   require(length <= 16777216 && length >= 0, s"HTTP 2 frame length must be in the range [0..16777216] bytes.  Given: $length")
+
+  lazy val toByteString:ByteString = ByteString(length).drop(1) ++ ByteString(frameType) ++ ByteString(flags) ++ streamIdentifier.toByteString ++ payload
+  def toByteBuffer:ByteBuffer = toByteString.toByteBuffer
 }
 
 sealed trait ToHttp2Frame {
-  def toFrame: ToHttpFrame
+  def toFrame: Http2Frame
   def streamIdentifier: StreamIdentifier
 }
 
@@ -48,7 +57,7 @@ sealed trait FrameDef {
   def frameType:Byte
 }
 
-object ToHttpFrame {
+object Http2Frame {
 
  /* Data
    +---------------+
@@ -66,7 +75,7 @@ object ToHttpFrame {
 
     padding.foreach(x => require(x <= 255 && x >= 0, s"HTTP 2 Data frame padding must be in the range [0..255] bytes.  Given: $x") )
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = data.length + padding.map(_ + 1).getOrElse(0),
                                         frameType = Data.frameType,
                                         flags = Data.flags(endStream,padding.isDefined),
@@ -103,7 +112,7 @@ object ToHttpFrame {
                           priority: Option[Header.Priority] = None,
                           padding: Option[Int] = None) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = fragment.length + padding.map(_ + 1).getOrElse(0) + (if (priority.isDefined) 5 else 0),
                                         frameType = Header.frameType,
                                         flags = Header.flags(endStream,endHeaders,padding.isDefined,priority.isDefined),
@@ -145,7 +154,7 @@ object ToHttpFrame {
                             weight:Byte,
                             exclusive:Boolean = false) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = 5,
                                         frameType = Priority.frameType,
                                         flags = Flags.zero,
@@ -164,13 +173,13 @@ object ToHttpFrame {
    +---------------------------------------------------------------+
   */
   final case class RstStream(streamIdentifier: StreamIdentifier,
-                             errorCode:Int) extends ToHttp2Frame {
+                             errorCode:Http2Error) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = 4,
                                         frameType = RstStream.frameType,
                                         flags = Flags.zero,
-                                        payload = ByteString(errorCode))
+                                        payload = ByteString(errorCode.code))
 
   }
 
@@ -193,7 +202,7 @@ object ToHttpFrame {
     require(identifier < 65536 && identifier >= 0,s"HTTP 2 Settings identifier must be in a range of [0..65535].  Given: $identifier")
     require(value >=0 && value < 4294967296L, s"HTTP 2 Settings value must be in a range of [0..4294967296]. Given: $value")
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier,
                                         length = 6,
                                         frameType = Settings.frameType,
                                         flags = Settings.flags(ack),
@@ -233,7 +242,7 @@ object ToHttpFrame {
                                endHeaders: Boolean = true,
                                padding: Option[Int] = None) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = fragment.length + padding.map(_ + 1).getOrElse(0),
                                         frameType = PushPromise.frameType,
                                         flags = PushPromise.flags(endHeaders,padding.isDefined),
@@ -263,7 +272,7 @@ object ToHttpFrame {
   final case class Ping(streamIdentifier: StreamIdentifier,
                         opaque:Long = 0L,
                         ack:Boolean = false) extends ToHttp2Frame {
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = 8,
                                         frameType = Ping.frameType,
                                         flags = Ping.flags(ack),
@@ -290,13 +299,13 @@ object ToHttpFrame {
   */
   final case class GoAway(streamIdentifier: StreamIdentifier,
                           lastStreamIdentifier: StreamIdentifier,
-                          errorCode:Int,
+                          errorCode:Http2Error,
                           debugData:ByteString) extends ToHttp2Frame {
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = 8 + debugData.length,
                                         frameType = GoAway.frameType,
                                         flags = Flags.zero,
-                                        payload = lastStreamIdentifier.toByteString ++ ByteString(errorCode) ++ debugData)
+                                        payload = lastStreamIdentifier.toByteString ++ ByteString(errorCode.code) ++ debugData)
   }
 
   object GoAway extends FrameDef {
@@ -312,7 +321,7 @@ object ToHttpFrame {
   final case class WindowUpdate(streamIdentifier: StreamIdentifier,
                                 windowSizeIncrement:Int) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = 4,
                                         frameType = WindowUpdate.frameType,
                                         flags = Flags.zero,
@@ -334,7 +343,7 @@ object ToHttpFrame {
                                 fragment:ByteString,
                                 endHeaders:Boolean = true) extends ToHttp2Frame {
 
-    def toFrame:ToHttpFrame = ToHttpFrame(streamIdentifier = streamIdentifier,
+    def toFrame:Http2Frame = Http2Frame(streamIdentifier = streamIdentifier,
                                         length = fragment.length,
                                         frameType = Continuation.frameType,
                                         flags = Continuation.flags(endHeaders),

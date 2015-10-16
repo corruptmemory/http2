@@ -16,7 +16,7 @@ object Http2Muxer {
 
 class Http2Muxer() {
 
-  import ToHttpFrame._
+  import Http2Frame._
   import Http2Muxer._
 
   /**
