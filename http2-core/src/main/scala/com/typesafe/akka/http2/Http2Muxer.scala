@@ -10,13 +10,13 @@ import akka.util.ByteString
 import scala.annotation.tailrec
 
 object Http2Muxer {
-  case class Muxed(numberBytesWritten: Int, unusedFrames: Vector[Http2Frame], accumulator: Vector[Http2Frame])
-  case class MuxedFrame(windowSize: Int, accumulator: Vector[Http2Frame])
+  case class Muxed(numberBytesWritten: Int, unusedFrames: Vector[ToHttp2Frame], accumulator: Vector[ToHttp2Frame])
+  case class MuxedFrame(windowSize: Int, accumulator: Vector[ToHttp2Frame])
 }
 
 class Http2Muxer() {
 
-  import Http2Frame._
+  import ToHttpFrame._
   import Http2Muxer._
 
   /**
@@ -30,24 +30,24 @@ class Http2Muxer() {
    *   code. Each frame type serves a distinct purpose in the establishment and management either of the connection as a whole or
    *   of individual streams.
    * @param accumulator accumlates the frames for muxing.
-   * 
+   *
    * @return muxed case class
    */
   def muxFrames(
       maxFrameSize: Int,
       initialWindowSize: Int,
-      frames: Vector[Http2Frame],
-      accumulator: Vector[Http2Frame]): Muxed = {
+      frames: Vector[ToHttp2Frame],
+      accumulator: Vector[ToHttp2Frame]): Muxed = {
 
     @tailrec
-    def mux(windowSize: Int, frames: Vector[Http2Frame], accumulator: Vector[Http2Frame]): Muxed = {
+    def mux(windowSize: Int, frames: Vector[ToHttp2Frame], accumulator: Vector[ToHttp2Frame]): Muxed = {
       frames.headOption match {
         case None =>
           Muxed(windowSize, frames, accumulator)
         case Some(frame:Data) if windowSize < initialWindowSize =>
-          val muxedFrame: MuxedFrame = muxDataFrame(maxFrameSize, initialWindowSize - windowSize, frame, accumulator)
+          val muxedFrame: MuxedFrame = muxData(maxFrameSize, initialWindowSize - windowSize, frame, accumulator)
           val windowSizeSum: Int = windowSize + muxedFrame.windowSize
-          if (muxedFrame.windowSize < frame.payload.size) {
+          if (muxedFrame.windowSize < frame.data.size) {
             assert(windowSizeSum == initialWindowSize)
             Muxed(windowSizeSum, frames, accumulator ++ muxedFrame.accumulator)
           } else {
@@ -60,23 +60,23 @@ class Http2Muxer() {
     mux(0, frames, accumulator)
   }
 
-  def muxDataFrame(
+  def muxData(
       maxFrameSize: Int,
       initialWindowSize: Int,
-      frame: Http2Frame,
-      accumulator: Vector[Http2Frame]): MuxedFrame = {
+      frame: Data,
+      accumulator: Vector[ToHttp2Frame]): MuxedFrame = {
 
     @tailrec
-    def mux(windowSize: Int, payload: ByteString, accumulator: Vector[Http2Frame]): MuxedFrame = {
+    def mux(windowSize: Int, payload: ByteString, accumulator: Vector[ToHttp2Frame]): MuxedFrame = {
       val frameSizeMin: Int = math.min(maxFrameSize, initialWindowSize - windowSize)
       if (payload.size > frameSizeMin) {
         val payloadChunk: ByteString = payload.take(frameSizeMin)
-        mux(windowSize + frameSizeMin, payload.drop(frameSizeMin), accumulator :+ Data(frame.identifier, payloadChunk))
+        mux(windowSize + frameSizeMin, payload.drop(frameSizeMin), accumulator :+ Data(frame.streamIdentifier, payloadChunk))
       } else {
-        MuxedFrame(windowSize, accumulator :+ Data(frame.identifier, payload))
+        MuxedFrame(windowSize, accumulator :+ Data(frame.streamIdentifier, payload))
       }
     }
-    mux(initialWindowSize, frame.payload, accumulator)
+    mux(initialWindowSize, frame.data, accumulator)
   }
 }
 
