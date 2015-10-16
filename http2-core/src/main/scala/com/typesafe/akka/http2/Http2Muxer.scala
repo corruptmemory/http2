@@ -62,17 +62,13 @@ class Http2Muxer() {
       case 1 =>
         MuxedFrame(accumulator :+ headerFrame.toFrame.toByteString)
       case _ =>
-        val continuations: MuxedFrame = muxContinuation(
-          maxFrameSize,
-          headerFrame.streamIdentifier,
-          headerFragments.tail,
-          accumulator)
+        val continuations: MuxedFrame =
+          muxContinuation(headerFrame.streamIdentifier, headerFragments.tail, accumulator)
         MuxedFrame((accumulator :+ headerFrame.toFrame.toByteString) ++ continuations.accumulator)
     }
   }
 
   private def muxContinuation(
-    maxFrameSize: Int,
     streamIdentifier: StreamIdentifier,
     fragments: Vector[ByteString],
     accumulator: Vector[ByteString]): MuxedFrame = {
@@ -84,7 +80,7 @@ class Http2Muxer() {
       continuations.size,
       Continuation(streamIdentifier, continuations.last.fragment, endHeaders = true))
 
-    MuxedFrame(updatedContinuations.map(_.toFrame.toByteString))
+    MuxedFrame(accumulator ++ updatedContinuations.map(_.toFrame.toByteString))
   }
 
   def muxData(
