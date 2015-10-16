@@ -38,9 +38,17 @@ class Http2Muxer() {
       accumulator: Vector[ByteString]): Muxed = {
 
     frames.headOption match {
-      case Some(frame: Data)   => Muxed(accumulator ++ muxData(maxFrameSize, frame, accumulator).accumulator)
-      case Some(frame: Header) => Muxed(accumulator ++ muxHeader(maxFrameSize, frame, accumulator).accumulator)
-      case None                => Muxed(accumulator)
+      case Some(frame: Data)         => Muxed(accumulator ++ muxData(maxFrameSize, frame, accumulator).accumulator)
+      case Some(frame: Header)       => Muxed(accumulator ++ muxHeader(maxFrameSize, frame, accumulator).accumulator)
+      case Some(frame: Priority)     => Muxed(accumulator ++ muxPriority(frame, accumulator).accumulator)
+      case Some(frame: RstStream)    => Muxed(accumulator ++ muxRstStream(frame, accumulator).accumulator)
+      case Some(frame: Settings)     => Muxed(accumulator ++ muxSettings(frame, accumulator).accumulator)
+      case Some(frame: PushPromise)  => Muxed(accumulator ++ muxPushPromise(frame, accumulator).accumulator)
+      case Some(frame: Ping)         => Muxed(accumulator ++ muxPing(frame, accumulator).accumulator)
+      case Some(frame: GoAway)       => Muxed(accumulator ++ muxGoAway(frame, accumulator).accumulator)
+      case Some(frame: WindowUpdate) => Muxed(accumulator ++ muxWindowUpadate(frame, accumulator).accumulator)
+      case Some(frame: Continuation) => Muxed(accumulator) // will not happen
+      case None                      => Muxed(accumulator)
     }
   }
 
@@ -89,5 +97,25 @@ class Http2Muxer() {
 
     MuxedFrame(datas)
   }
+
+  def muxPriority(priorityFrame: Priority, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ priorityFrame.toFrame.toByteString)
+
+  def muxRstStream(rstStream: RstStream, accumulator: Vector[ByteString]): MuxedFrame = MuxedFrame(accumulator :+ rstStream.toFrame.toByteString)
+
+  def muxSettings(settingsFrame: Settings, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ settingsFrame.toFrame.toByteString)
+
+  def muxPushPromise(pushPromiseFrame: PushPromise, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ pushPromiseFrame.toFrame.toByteString)
+
+  def muxPing(pingFrame: Ping, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ pingFrame.toFrame.toByteString)
+
+  def muxGoAway(goAwayFrame: GoAway, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ goAwayFrame.toFrame.toByteString)
+
+  def muxWindowUpadate(windowUpdateFrame: WindowUpdate, accumulator: Vector[ByteString]): MuxedFrame =
+    MuxedFrame(accumulator :+ windowUpdateFrame.toFrame.toByteString)
 }
 
