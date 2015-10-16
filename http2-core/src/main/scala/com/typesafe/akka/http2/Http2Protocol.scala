@@ -7,6 +7,7 @@ package com.typesafe.akka.http2
 
 import akka.util.ByteString
 import java.lang.IllegalArgumentException
+import java.nio.ByteBuffer
 
 final class StreamIdentifier private(val underlying:Int) extends AnyVal {
   def toInt:Int = underlying
@@ -42,6 +43,9 @@ final case class Http2Frame(streamIdentifier: StreamIdentifier,
                             flags: Byte,
                             payload: ByteString) {
   require(length <= 16777216 && length >= 0, s"HTTP 2 frame length must be in the range [0..16777216] bytes.  Given: $length")
+
+  lazy val toByteString:ByteString = ByteString(length).drop(1) ++ ByteString(frameType) ++ ByteString(flags) ++ streamIdentifier.toByteString ++ payload
+  def toByteBuffer:ByteBuffer = toByteString.toByteBuffer
 }
 
 sealed trait ToHttp2Frame {
