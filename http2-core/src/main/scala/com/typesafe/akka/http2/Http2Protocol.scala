@@ -194,19 +194,15 @@ object Http2Frame {
    |                        Value (32)                             |
    +---------------------------------------------------------------+
    */
-  abstract class Settings(streamIdentifier: StreamIdentifier,
-                          identifier:Int /* Only uses 16 bits */,
-                          value:Long /* Only uses 32 bits */,
-                          ack:Boolean = false) extends ToHttp2Frame {
-
-    require(identifier < 65536 && identifier >= 0,s"HTTP 2 Settings identifier must be in a range of [0..65535].  Given: $identifier")
-    require(value >=0 && value < 4294967296L, s"HTTP 2 Settings value must be in a range of [0..4294967296]. Given: $value")
+  final case class Settings(streamIdentifier: StreamIdentifier,
+                            settings: Traversable[Settings.Setting],
+                            ack:Boolean = false) extends ToHttp2Frame {
 
     def toFrame:Http2Frame = Http2Frame(streamIdentifier,
-                                        length = 6,
+                                        length = 6 * settings.size,
                                         frameType = Settings.frameType,
                                         flags = Settings.flags(ack),
-                                        payload = ByteString(identifier.toShort) ++ ByteString(value.toInt))
+                                        payload = settings.foldLeft[ByteString](ByteString.empty)(_ ++ _.toByteString))
   }
 
   object Settings extends FrameDef {
@@ -214,16 +210,24 @@ object Http2Frame {
 
     val frameType:Byte = 0x04
 
+    abstract class Setting(val identifier:Int /* Only uses 16 bits */,
+                           val value:Long /* Only uses 32 bits */) {
+      require(identifier < 65536 && identifier >= 0,s"HTTP 2 Setting identifier must be in a range of [0..65535].  Given: $identifier")
+      require(value >=0 && value < 4294967296L, s"HTTP 2 Setting value must be in a range of [0..4294967296]. Given: $value")
+
+      def toByteString:ByteString = ByteString(identifier.toShort) ++ ByteString(value.toInt)
+    }
+
     private def flags(ack:Boolean):Byte = Flags.Zero.addFlag(ack,ackFlag).toByte
 
-    final case class HeaderTableSize(streamIdentifier: StreamIdentifier,size:Long = 4096, ack:Boolean = false) extends Settings(streamIdentifier, 0x1,size,ack)
-    final case class EnablePush(streamIdentifier: StreamIdentifier,enabled:Boolean = true, ack:Boolean = false) extends Settings(streamIdentifier, 0x2,if (enabled) 1 else 0,ack)
-    final case class MaxConcurrentStreams(streamIdentifier: StreamIdentifier,max:Long, ack:Boolean = false) extends Settings(streamIdentifier, 0x3,max,ack)
-    final case class InitialWindowSize(streamIdentifier: StreamIdentifier,size:Int = 65535, ack:Boolean = false) extends Settings(streamIdentifier, 0x4,size,ack) {
+    final case class HeaderTableSize(size:Long = 4096) extends Setting(0x1,size)
+    final case class EnablePush(enabled:Boolean = true) extends Setting(0x2,if (enabled) 1 else 0)
+    final case class MaxConcurrentStreams(max:Long) extends Setting(0x3,max)
+    final case class InitialWindowSize(size:Int = 65535) extends Setting(0x4,size) {
       if (size > 2147483647 /* 2^31 - 1 */) throw new IllegalArgumentException("Flow control error")
     }
-    final case class MaxFrameSize(streamIdentifier: StreamIdentifier,size:Long, ack:Boolean = false) extends Settings(streamIdentifier, 0x5,size,ack)
-    final case class MaxHeaderListSize(streamIdentifier: StreamIdentifier,size:Long, ack:Boolean = false) extends Settings(streamIdentifier, 0x6,size,ack)
+    final case class MaxFrameSize(size:Long) extends Setting(0x5,size)
+    final case class MaxHeaderListSize(size:Long) extends Setting(0x6,size)
   }
 
   /*
