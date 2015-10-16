@@ -7,11 +7,9 @@ package com.typesafe.akka.http2
 
 import akka.util.ByteString
 
-import scala.annotation.tailrec
-
 object Http2Muxer {
-  case class Muxed(numberBytesWritten: Int, unusedFrames: Vector[ToHttp2Frame], accumulator: Vector[ByteString])
-  case class MuxedFrame(accumulator: Vector[ByteString], windowSize: Int = 0)
+  case class Muxed(accumulator: Vector[ByteString])
+  case class MuxedFrame(accumulator: Vector[ByteString])
 }
 
 class Http2Muxer() {
@@ -39,28 +37,11 @@ class Http2Muxer() {
       frames: Vector[ToHttp2Frame],
       accumulator: Vector[ByteString]): Muxed = {
 
-    @tailrec
-    def mux(windowSize: Int, frames: Vector[ToHttp2Frame], accumulator: Vector[ByteString]): Muxed = {
-      frames.headOption match {
-        case None =>
-          Muxed(windowSize, frames, accumulator)
-        case Some(frame: Data) if windowSize < initialWindowSize =>
-          val muxedData: MuxedFrame = muxData(maxFrameSize, initialWindowSize - windowSize, frame, accumulator)
-          val windowSizeSum: Int = windowSize + muxedData.windowSize
-          if (muxedData.windowSize < frame.data.size) {
-            assert(windowSizeSum == initialWindowSize)
-            Muxed(windowSizeSum, frames, accumulator ++ muxedData.accumulator)
-          } else {
-            mux(windowSizeSum, frames.tail, accumulator ++ muxedData.accumulator)
-          }
-        case Some(frame: Data) =>
-          Muxed(windowSize, frames, accumulator)
-        case Some(frame: Header) =>
-          val muxedHeader: MuxedFrame = muxHeader(maxFrameSize, frame, accumulator)
-          Muxed(windowSize, frames, accumulator ++ muxedHeader.accumulator)
-      }
+    frames.headOption match {
+      case Some(frame: Data)   => Muxed(accumulator ++ muxData(maxFrameSize, frame, accumulator).accumulator)
+      case Some(frame: Header) => Muxed(accumulator ++ muxHeader(maxFrameSize, frame, accumulator).accumulator)
+      case None                => Muxed(accumulator)
     }
-    mux(0, frames, accumulator)
   }
 
   def muxHeader(
@@ -73,12 +54,12 @@ class Http2Muxer() {
     else {
       val fragmentChunk: ByteString = headerFrame.fragment.take(maxFrameSize)
       val headerChunk = Header(headerFrame.streamIdentifier, fragmentChunk, endHeaders = false)
-      val continuationFrame: MuxedFrame = muxContinuation(
+      val continuationFrames: MuxedFrame = muxContinuation(
         maxFrameSize,
         headerFrame.streamIdentifier,
         headerFrame.fragment.drop(fragmentChunk.size),
         accumulator)
-      MuxedFrame((accumulator :+ headerChunk.toFrame.toByteString) ++ continuationFrame.accumulator)
+      MuxedFrame((accumulator :+ headerChunk.toFrame.toByteString) ++ continuationFrames.accumulator)
     }
   }
 
@@ -88,37 +69,27 @@ class Http2Muxer() {
     fragment: ByteString,
     accumulator: Vector[ByteString]): MuxedFrame = {
 
-    val continuation = fragment.sliding(maxFrameSize).map(frag =>
+    val continuations = fragment.sliding(maxFrameSize).map(frag =>
       Continuation(streamIdentifier, frag, endHeaders = false)).toVector
 
-    val fixedContinuation = continuation.updated(
-      continuation.size,
-      Continuation(streamIdentifier, continuation.last.fragment, endHeaders = true))
+    val updatedContinuations = continuations.updated(
+      continuations.size,
+      Continuation(streamIdentifier, continuations.last.fragment, endHeaders = true))
 
-    val fixedContinuationToVectorOfByteString = fixedContinuation.map(_.toFrame.toByteString)
+    val continuationToVectorOfByteString = updatedContinuations.map(_.toFrame.toByteString)
 
-
-    MuxedFrame(fixedContinuationToVectorOfByteString)
+    MuxedFrame(continuationToVectorOfByteString)
   }
 
   def muxData(
       maxFrameSize: Int,
-      initialWindowSize: Int,
       dataFrame: Data,
       accumulator: Vector[ByteString]): MuxedFrame = {
 
-    @tailrec
-    def mux(windowSize: Int, data: ByteString, accumulator: Vector[ByteString]): MuxedFrame = {
-      val frameSizeMin: Int = math.min(maxFrameSize, initialWindowSize - windowSize)
-      if (data.size <= frameSizeMin)
-        MuxedFrame(accumulator :+ dataFrame.toFrame.toByteString, windowSize)
-      else {
-        val dataChunk: ByteString = data.take(frameSizeMin)
-        mux(windowSize + frameSizeMin, data.drop(frameSizeMin),
-          accumulator :+ Data(dataFrame.streamIdentifier, dataChunk).toFrame.toByteString)
-      }
-    }
-    mux(initialWindowSize, dataFrame.data, accumulator)
+    val datas = dataFrame.data.sliding(maxFrameSize).map(
+      data => Data(dataFrame.streamIdentifier, dataFrame.data).toFrame.toByteString).toVector
+
+    MuxedFrame(datas)
   }
 }
 
